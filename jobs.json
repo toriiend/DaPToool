@@ -1,0 +1,235 @@
+{
+  "pipelines": {
+    "base_recon": [
+      {
+        "name": "Ping (ICMP reachability, 4 packets)",
+        "requires": ["ping"],
+        "modes": ["safe", "extended"],
+        "timeout_sec": 10,
+        "output_file": "evidence/ping.txt",
+        "skip_if_exists": true,
+        "argv_posix": ["ping", "-c", "4", "-W", "2", "{target_host}"],
+        "argv_windows": ["ping", "-n", "4", "-w", "2000", "{target_host}"]
+      },
+      {
+        "name": "DNS lookup (dig)",
+        "requires": ["dig"],
+        "modes": ["safe", "extended"],
+        "timeout_sec": 10,
+        "output_file": "evidence/dns_dig.txt",
+        "argv": ["dig", "+short", "{target_host}"]
+      },
+      {
+        "name": "HTTP headers (curl -D -)",
+        "requires": ["curl"],
+        "modes": ["safe", "extended"],
+        "timeout_sec": 20,
+        "output_file": "evidence/http_headers.txt",
+        "argv": [
+          "curl",
+          "-sS",
+          "-L",
+          "--max-redirs",
+          "3",
+          "--connect-timeout",
+          "5",
+          "--max-time",
+          "20",
+          "-D",
+          "-",
+          "-o",
+          "/dev/null",
+          "{target_url}"
+        ]
+      },
+      {
+        "name": "Fetch homepage sample (<=200KB)",
+        "requires": ["curl"],
+        "modes": ["safe", "extended"],
+        "timeout_sec": 25,
+        "output_file": "evidence/homepage_sample.txt",
+        "argv": [
+          "curl",
+          "-sS",
+          "-L",
+          "--max-redirs",
+          "3",
+          "--connect-timeout",
+          "5",
+          "--max-time",
+          "25",
+          "--range",
+          "0-200000",
+          "{target_url}"
+        ]
+      }
+    ],
+    "safe_nmap": [
+      {
+        "name": "Nmap top-100 TCP connect scan (rate-limited)",
+        "requires": ["nmap"],
+        "modes": ["safe", "extended"],
+        "timeout_sec": 160,
+        "output_file": "evidence/nmap_top100.txt",
+        "argv": [
+          "nmap",
+          "-sT",
+          "-Pn",
+          "-T2",
+          "--top-ports",
+          "100",
+          "--max-rate",
+          "50",
+          "--host-timeout",
+          "2m",
+          "{target_ip}"
+        ]
+      }
+    ],
+    "tls_basic": [
+      {
+        "name": "TLS handshake + cert info (openssl s_client)",
+        "requires": ["openssl"],
+        "modes": ["extended"],
+        "timeout_sec": 25,
+        "output_file": "evidence/tls_s_client.txt",
+        "argv": [
+          "openssl",
+          "s_client",
+          "-connect",
+          "{target_host}:443",
+          "-servername",
+          "{target_host}",
+          "-brief",
+          "-showcerts"
+        ]
+      }
+    ],
+    "zap_baseline_optional": [
+      {
+        "name": "OWASP ZAP baseline (optional, passive-ish)",
+        "requires": ["zap-baseline.py"],
+        "modes": ["extended"],
+        "timeout_sec": 600,
+        "output_file": "evidence/zap_baseline_stdout.txt",
+        "argv": [
+          "zap-baseline.py",
+          "-t",
+          "{target_url}",
+          "-m",
+          "2",
+          "-J",
+          "{run_dir}/evidence/zap_report.json",
+          "-r",
+          "zap_report.html"
+        ]
+      }
+    ],
+    "tshark_capture_optional": [
+      {
+        "name": "Packet capture 10s (tshark) [optional]",
+        "requires": ["tshark"],
+        "requires_root": true,
+        "modes": ["extended"],
+        "timeout_sec": 20,
+        "output_file": "evidence/tshark_stdout.txt",
+        "argv": [
+          "tshark",
+          "-a",
+          "duration:10",
+          "-f",
+          "host {target_ip}",
+          "-w",
+          "{run_dir}/evidence/capture.pcapng"
+        ]
+      }
+    ]
+  },
+  "jobs": [
+    {
+      "id": "PING",
+      "title": "Ping / Reachability Check",
+      "pipeline": [
+        {
+          "name": "Ping (ICMP reachability, 4 packets)",
+          "requires": ["ping"],
+          "modes": ["safe", "extended"],
+          "timeout_sec": 10,
+          "output_file": "evidence/ping.txt",
+          "skip_if_exists": true,
+          "argv_posix": ["ping", "-c", "4", "-W", "2", "{target_host}"],
+          "argv_windows": ["ping", "-n", "4", "-w", "2000", "{target_host}"]
+        }
+      ]
+    },
+    {
+      "id": "A01",
+      "title": "Broken Access Control",
+      "pipeline": [
+        { "ref": "base_recon" },
+        { "ref": "safe_nmap" },
+        {
+          "name": "robots.txt check",
+          "requires": ["curl"],
+          "modes": ["safe", "extended"],
+          "timeout_sec": 15,
+          "output_file": "evidence/a01_robots.txt",
+          "argv": ["curl", "-sS", "--max-time", "15", "{target_url}robots.txt"]
+        },
+        {
+          "name": ".well-known/security.txt check",
+          "requires": ["curl"],
+          "modes": ["safe", "extended"],
+          "timeout_sec": 15,
+          "output_file": "evidence/a01_security_txt.txt",
+          "argv": ["curl", "-sS", "--max-time", "15", "{target_url}.well-known/security.txt"]
+        }
+      ]
+    },
+    {
+      "id": "A02",
+      "title": "Cryptographic Failures",
+      "pipeline": [{ "ref": "base_recon" }, { "ref": "tls_basic" }]
+    },
+    {
+      "id": "A03",
+      "title": "Injection (heuristics only)",
+      "pipeline": [{ "ref": "base_recon" }, { "ref": "zap_baseline_optional" }]
+    },
+    {
+      "id": "A04",
+      "title": "Insecure Design (mostly manual)",
+      "pipeline": [{ "ref": "base_recon" }]
+    },
+    {
+      "id": "A05",
+      "title": "Security Misconfiguration",
+      "pipeline": [{ "ref": "base_recon" }, { "ref": "safe_nmap" }]
+    },
+    {
+      "id": "A06",
+      "title": "Vulnerable and Outdated Components (signals only)",
+      "pipeline": [{ "ref": "base_recon" }]
+    },
+    {
+      "id": "A07",
+      "title": "Identification and Authentication Failures (signals only)",
+      "pipeline": [{ "ref": "base_recon" }]
+    },
+    {
+      "id": "A08",
+      "title": "Software and Data Integrity Failures (signals only)",
+      "pipeline": [{ "ref": "base_recon" }]
+    },
+    {
+      "id": "A09",
+      "title": "Security Logging and Monitoring Failures (signals only)",
+      "pipeline": [{ "ref": "base_recon" }]
+    },
+    {
+      "id": "A10",
+      "title": "SSRF (passive discovery only)",
+      "pipeline": [{ "ref": "base_recon" }]
+    }
+  ]
+}
