@@ -430,7 +430,7 @@ class Orchestrator:
                     return None
 
                 if (time.monotonic() - started) > timeout_sec:
-                    self.log(f"⏱ Timeout reached ({timeout_sec}s) → terminating step…")
+                    self.log(f" Timeout reached, ({timeout_sec}s)  terminating step…")
                     self._terminate_proc(proc)
                     return None
 

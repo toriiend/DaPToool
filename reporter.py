@@ -1,16 +1,37 @@
 from __future__ import annotations
 
-import time
+import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import markdown as mdlib
+# markdown optional: không có lib vẫn export html fallback
+try:
+    import markdown as mdlib
+except Exception:
+    mdlib = None  # type: ignore
 
 from ai_agent import AIResult
 
 
-def _md_escape(s: str) -> str:
-    return s.replace("\r\n", "\n")
+def _as_text(x: Any) -> str:
+    if x is None:
+        return ""
+    if isinstance(x, str):
+        return x
+    try:
+        return json.dumps(x, indent=2, ensure_ascii=False)
+    except Exception:
+        return str(x)
+
+
+def _format_owasp_mapping(mapping: Dict[str, str]) -> str:
+    if not mapping:
+        return "_(no mapping)_"
+    lines = []
+    for k in sorted(mapping.keys()):
+        v = mapping.get(k, "")
+        lines.append(f"- **{k}**: {v}")
+    return "\n".join(lines)
 
 
 def _build_local_report(findings: Dict[str, Any]) -> str:
@@ -19,18 +40,18 @@ def _build_local_report(findings: Dict[str, Any]) -> str:
     items = findings.get("findings", [])
 
     lines = []
-    lines.append(f"# Security Assessment Report (Non-destructive)\n")
+    lines.append("# Security Assessment Report (Non-destructive)\n")
     lines.append(f"- Generated: **{meta.get('generated_at','')}**")
     lines.append(f"- Mode: **{meta.get('mode','')}**")
     lines.append(f"- Target: **{t.get('raw','')}** (host={t.get('host','')}, ip={t.get('ip','')})")
-    lines.append(f"- Evidence dir: `evidence/`\n")
+    lines.append("- Evidence dir: `evidence/`\n")
 
     lines.append("## Findings (local heuristics)\n")
     if not items:
         lines.append("_No heuristic findings produced. Check evidence outputs for details._\n")
     else:
         for i, f in enumerate(items, 1):
-            lines.append(f"### {i}. [{f.get('severity','info').upper()}] {f.get('title','')}")
+            lines.append(f"### {i}. [{str(f.get('severity','info')).upper()}] {f.get('title','')}")
             lines.append(f"- OWASP: **{f.get('owasp','')}**")
             lines.append(f"- Evidence: {f.get('evidence','')}")
             lines.append(f"- Remediation: {f.get('remediation','')}\n")
@@ -46,13 +67,12 @@ def _build_local_report(findings: Dict[str, Any]) -> str:
                 of = s.get("output_file")
                 of_rel = ""
                 if of:
-                    # Make path relative to run_dir
                     try:
-                        of_rel = str(Path(of).relative_to(Path(findings.get('_run_dir','.' ))))
+                        of_rel = str(Path(of).relative_to(Path(findings.get("_run_dir", "."))))
                     except Exception:
                         of_rel = of
                 lines.append(
-                    f"- ✅ {s.get('name')} (rc={s.get('return_code')}, timeout={s.get('timeout_sec')}s)"
+                    f"-  {s.get('name')} (rc={s.get('return_code')}, timeout={s.get('timeout_sec')}s)"
                     + (f" → `{of_rel}`" if of_rel else "")
                 )
         lines.append("")
@@ -74,10 +94,8 @@ def export_reports(run_dir: str, findings: Dict[str, Any], ai_result: Optional[A
     rep_dir = run_path / "reports"
     rep_dir.mkdir(parents=True, exist_ok=True)
 
-    # Embed run_dir into findings for relative path attempts (best effort)
-    findings["_run_dir"] = run_dir
+    findings["_run_dir"] = run_dir  # best effort for relative paths
 
-    # Markdown
     local_md = _build_local_report(findings)
     final_md = local_md
 
@@ -86,21 +104,33 @@ def export_reports(run_dir: str, findings: Dict[str, Any], ai_result: Optional[A
             local_md
             + "\n\n---\n\n"
             + "# AI Analysis\n\n"
+            + f"- Provider: **{ai_result.provider}**\n"
+            + f"- Model: **{ai_result.model}**\n\n"
             + "## Executive summary\n\n"
-            + _md_escape(ai_result.summary)
+            + _as_text(ai_result.summary)
             + "\n\n## OWASP mapping\n\n"
-            + _md_escape(ai_result.owasp_mapping)
+            + _format_owasp_mapping(ai_result.owasp_mapping)
             + "\n\n## Remediation (prioritized)\n\n"
-            + _md_escape(ai_result.remediation)
+            + _as_text(ai_result.remediation)
             + "\n\n## Full AI-generated report\n\n"
-            + _md_escape(ai_result.report_md)
+            + _as_text(ai_result.report_md)
         )
 
     md_path = rep_dir / "report.md"
     md_path.write_text(final_md, encoding="utf-8")
 
     # HTML
-    html_body = mdlib.markdown(final_md, extensions=["tables", "fenced_code"])
+    if mdlib:
+        html_body = mdlib.markdown(final_md, extensions=["tables", "fenced_code"])
+    else:
+        # fallback HTML (no dependency)
+        esc = (
+            final_md.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        html_body = f"<pre>{esc}</pre>"
+
     html = f"""<!doctype html>
 <html>
 <head>

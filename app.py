@@ -9,7 +9,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from orchestrator import Orchestrator, RunState
 
-APP_TITLE = "Security Assessment Launcher (Authorized Use Only)"
+APP_TITLE = "DaPToool"
 
 
 @dataclass
@@ -77,7 +77,7 @@ class App(tk.Tk):
 
         auth = ttk.Checkbutton(
             top,
-            text="I have authorization (required)",
+            text="CÓ QUYỀN CHƯA THẰNG CHÓ???",
             variable=self.auth_var,
         )
         auth.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
@@ -113,7 +113,7 @@ class App(tk.Tk):
         self.log.pack(fill="both", expand=True)
         self.log.configure(state="disabled")
 
-        ttk.Label(right, text="OWASP Top 10 Pipelines:", font=("TkDefaultFont", 10, "bold")).pack(
+        ttk.Label(right, text="OWASP Top 10:", font=("TkDefaultFont", 10, "bold")).pack(
             anchor="w", pady=(0, 6)
         )
         self.owasp_panel = ttk.Frame(right)
@@ -181,7 +181,7 @@ class App(tk.Tk):
 
     def _guard_authorization(self) -> bool:
         if not self.auth_var.get():
-            messagebox.showwarning("Authorization required", "Tick 'I have authorization' to run jobs.")
+            messagebox.showwarning("MÀY ĐÉO CÓ QUYỀN!!!", "XÁC NHẬN NHANH CON MẸ MÀY LÊN!!!")
             return False
         return True
 
@@ -190,7 +190,7 @@ class App(tk.Tk):
             return
         target = self.target_var.get().strip()
         if not target:
-            messagebox.showwarning("Missing target", "Enter a target (domain / URL / IP).")
+            messagebox.showwarning("HAHA THẰNG NGU", "QUÊN NHẬP TARGET KÌA TML!!!")
             return
 
         mode_key = self._get_mode_key()
@@ -206,7 +206,7 @@ class App(tk.Tk):
             return
         target = self.target_var.get().strip()
         if not target:
-            messagebox.showwarning("Missing target", "Enter a target (domain / URL / IP).")
+            messagebox.showwarning("HAHA THẰNG NGU", "QUÊN NHẬP TARGET KÌA TML!!!")
             return
 
         mode_key = self._get_mode_key()
