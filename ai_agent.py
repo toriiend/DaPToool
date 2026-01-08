@@ -6,10 +6,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-# dotenv optional (để app vẫn chạy nếu chưa cài python-dotenv)
+# dotenv optional
 try:
     from dotenv import load_dotenv
-
     load_dotenv()
 except Exception:
     pass
@@ -23,6 +22,8 @@ class AIResult:
     owasp_mapping: Dict[str, str]
     remediation: str
     report_md: str
+    cve_analysis: Optional[str] = None  # NEW: CVE-specific analysis
+    attack_analysis: Optional[str] = None  # NEW: Attack method analysis
 
 
 def _env(name: str, default: str = "") -> str:
@@ -31,18 +32,15 @@ def _env(name: str, default: str = "") -> str:
 
 
 def _get_provider() -> str:
-    # Build 2.0 dùng AI_PROVIDER (recommended) :contentReference[oaicite:4]{index=4}
     p = _env("AI_PROVIDER", "gemini").lower()
     return p or "gemini"
 
 
 def _get_api_key(provider: str) -> str:
-    # Ưu tiên AI_API_KEY của build 2.0 :contentReference[oaicite:5]{index=5}
     key = _env("AI_API_KEY", "")
     if key:
         return key
 
-    # Fallback provider-specific keys (để compatible build 1.0 / thói quen cũ)
     if provider == "gemini":
         return _env("GEMINI_API_KEY", "")
     if provider == "openai":
@@ -54,48 +52,67 @@ def _get_api_key(provider: str) -> str:
 
 
 def _get_model(provider: str) -> str:
-    # Build 2.0 dùng AI_MODEL :contentReference[oaicite:6]{index=6}
     m = _env("AI_MODEL", "")
     if m:
         return m
 
-    # fallback provider-specific
     if provider == "gemini":
-        return _env("GEMINI_MODEL", "gemini-2.5-flash")
+        return _env("GEMINI_MODEL", "gemini-2.0-flash-exp")
 
-    # default safe
-    return "gemini-2.5-flash"
+    return "gemini-2.0-flash-exp"
 
 
-def _compact_findings(findings_json: Dict[str, Any], max_chars: int = 4500) -> str:
-
+def _compact_findings(findings_json: Dict[str, Any], max_chars: int = 6000) -> str:
+    """
+    Enhanced version with CVE data
+    """
     tgt = findings_json.get("target", {}) or {}
     meta = findings_json.get("meta", {}) or {}
     findings = findings_json.get("findings", []) or []
+    cve_summary = findings_json.get("cve_enrichment", {}).get("cve_summary", {})
 
     lines: list[str] = []
     lines.append(f"Target: {tgt.get('raw')} | host={tgt.get('host')} | ip={tgt.get('ip')} | url={tgt.get('url')}")
     lines.append(f"Mode: {meta.get('mode')} | Tools: {', '.join(meta.get('tools_present', []) or [])}")
-    lines.append("")
-    lines.append("Findings (heuristics/signals):")
+    
+    # Add CVE summary if available
+    if cve_summary:
+        lines.append(f"\nCVE Intelligence Summary:")
+        lines.append(f"- Total CVEs: {cve_summary.get('total_cves_found', 0)}")
+        lines.append(f"- Exploits Available: {cve_summary.get('exploits_available', 0)}")
+        sev = cve_summary.get('severity_breakdown', {})
+        lines.append(f"- Severity: CRITICAL={sev.get('CRITICAL',0)}, HIGH={sev.get('HIGH',0)}, MEDIUM={sev.get('MEDIUM',0)}, LOW={sev.get('LOW',0)}")
+    
+    lines.append("\nFindings (with CVE & attack intelligence):")
 
     for i, f in enumerate(findings[:30], start=1):
         sev = (f.get("severity") or "info").upper()
         owasp = f.get("owasp") or "N/A"
         title = f.get("title") or "(no title)"
         evidence = (f.get("evidence") or "").strip()
-        remediation = (f.get("remediation") or "").strip()
-
+        
+        # Include CVE data if present
+        cve_data = f.get("cve_data", [])
+        attack_methods = f.get("attack_methods", [])
+        
         if len(evidence) > 240:
             evidence = evidence[:240] + "…"
-        if len(remediation) > 240:
-            remediation = remediation[:240] + "…"
 
         lines.append(f"{i}. [{sev}] ({owasp}) {title}")
         if evidence:
             lines.append(f"   Evidence: {evidence}")
-        if remediation:
-            lines.append(f"   Local hint: {remediation}")
+        
+        # Add CVE info
+        if cve_data:
+            lines.append(f"   CVEs: {len(cve_data)} related")
+            for cve in cve_data[:2]:  # Show top 2
+                cve_id = cve.get('cve_id', 'Unknown')
+                cve_sev = cve.get('severity', 'UNKNOWN')
+                lines.append(f"     - {cve_id} [{cve_sev}]")
+        
+        # Add attack methods
+        if attack_methods:
+            lines.append(f"   Attack vectors: {len(attack_methods)} identified")
 
     text = "\n".join(lines)
     return text if len(text) <= max_chars else (text[:max_chars] + "\n…(truncated)")
@@ -121,10 +138,11 @@ def _fallback_mapping(findings_json: Dict[str, Any]) -> Dict[str, str]:
 
 
 def analyze_findings(findings_json: Dict[str, Any]) -> AIResult:
-
+    """
+    Enhanced version with CVE and attack method context
+    """
     provider = _get_provider()
     if provider != "gemini":
-        # để dễ mở rộng sau: openai/claude/custom (nhưng 3.0 implement gemini trước cho chắc)
         raise RuntimeError(f"AI_PROVIDER='{provider}' not implemented yet. Use AI_PROVIDER=gemini for now.")
 
     api_key = _get_api_key(provider)
@@ -143,22 +161,34 @@ def analyze_findings(findings_json: Dict[str, Any]) -> AIResult:
 
     compact = _compact_findings(findings_json)
 
-    # Prompt style: gọn + actionable 
+    # Enhanced prompt with CVE context
     prompt = f"""
-Bạn là Senior Security Engineer đang viết ghi chú đánh giá an ninh cho một bài kiểm tra ĐƯỢC ỦY QUYỀN và KHÔNG PHÁ HOẠI (non-destructive).
+Bạn là Senior Security Engineer đang viết báo cáo đánh giá an ninh chi tiết cho một bài kiểm tra ĐÃ ĐƯỢC ỦY QUYỀN và KHÔNG PHÁ HOẠI (non-destructive).
 
-Ràng buộc bắt buộc:
-- KHÔNG cung cấp exploit, payload, brute-force, hoặc hướng dẫn xâm nhập.
-- Chỉ đưa ra khuyến nghị phòng thủ (defensive remediation).
+Rằng buộc bắt buộc:
+- KHÔNG cung cấp exploit code, payload, brute-force scripts, hoặc hướng dẫn xâm nhập chi tiết.
+- Chỉ đưa ra khuyến nghị phòng thủ (defensive remediation) và phương pháp phát hiện.
+- Phân tích CVE và attack methods để đưa ra đánh giá rủi ro thực tế.
 - Viết ngắn gọn, thực tế, dễ triển khai.
 
+Context: Dữ liệu đã được làm giàu với CVE intelligence và attack method mapping từ MITRE ATT&CK framework.
+
 Hãy trả về STRICT JSON với các khóa:
-- summary: chuỗi (dạng bullet list, 3-6 ý)
-- owasp_mapping: object ánh xạ mã OWASP -> giải thích 1-2 câu cho mỗi mã
-- remediation: chuỗi (danh sách bullet theo mức ưu tiên)
-- report_md: chuỗi (báo cáo Markdown với các mục: Trạng thái, Phát hiện chính, Ánh xạ OWASP, Khuyến nghị khắc phục, Bằng chứng/Bước tiếp theo)
+- summary: chuỗi (dạng bullet list, 4-7 ý chính bao gồm đánh giá CVE nếu có)
+- owasp_mapping: object ánh xạ mã OWASP -> giải thích 1-2 câu cho mỗi mã, bao gồm CVE liên quan nếu có
+- remediation: chuỗi (danh sách bullet theo mức ưu tiên, tham chiếu CVE cụ thể nếu có)
+- cve_analysis: chuỗi (phân tích tổng quan về CVE findings, exploitability, risk level - để trống nếu không có CVE data)
+- attack_analysis: chuỗi (phân tích các attack vectors có thể, detection methods, và mitigation strategies)
+- report_md: chuỗi (báo cáo Markdown đầy đủ với các mục: 
+    * Trạng thái Tổng quan
+    * Phát hiện Chính & CVE Analysis
+    * Ánh xạ OWASP Top 10
+    * Attack Vectors & Techniques
+    * Khuyến nghị Khắc phục (ưu tiên theo severity)
+    * Bằng chứng/Bước tiếp theo)
 
 Viết toàn bộ nội dung báo cáo bằng tiếng Việt (kể cả heading trong Markdown).
+Với CVE data, cung cấp risk assessment cụ thể và prioritization rõ ràng.
 
 DATA:
 {compact}
@@ -175,7 +205,6 @@ DATA:
 
     parsed = _extract_json_blob(text)
     if not parsed:
-        # nếu model lỡ trả markdown thuần, vẫn không làm crash
         return AIResult(
             provider="gemini",
             model=model_name,
@@ -183,6 +212,8 @@ DATA:
             owasp_mapping=_fallback_mapping(findings_json),
             remediation="(AI output not in JSON) See report_md.",
             report_md=text.strip() or "(empty AI response)",
+            cve_analysis=None,
+            attack_analysis=None
         )
 
     return AIResult(
@@ -192,5 +223,6 @@ DATA:
         owasp_mapping=dict(parsed.get("owasp_mapping") or {}),
         remediation=str(parsed.get("remediation") or "").strip(),
         report_md=str(parsed.get("report_md") or "").strip(),
+        cve_analysis=str(parsed.get("cve_analysis") or "").strip() or None,
+        attack_analysis=str(parsed.get("attack_analysis") or "").strip() or None
     )
-
