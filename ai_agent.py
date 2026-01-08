@@ -13,6 +13,38 @@ try:
 except Exception:
     pass
 
+import requests
+
+def fetch_cve_data(cve_id):
+    """
+    Lấy thông tin CVE từ kho dữ liệu của CIRCL (Computer Incident Response Center Luxembourg).
+    Nguồn này cực uy tín, free, không cần API Key, update cực nhanh.
+    """
+    url = f"https://cve.circl.lu/api/cve/{cve_id}"
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if not data: # Đôi khi trả về 200 nhưng null
+                return None
+            
+            # Lọc bớt rác, chỉ lấy cái quan trọng để tiết kiệm token cho AI
+            summary = {
+                "id": data.get("id"),
+                "cvss": data.get("cvss"),
+                "summary": data.get("summary"),
+                "references": data.get("references", [])[:3], # Lấy 3 link tham khảo
+                "published": data.get("Published"),
+                "vulnerable_configuration": data.get("vulnerable_configuration", [])[:5]
+            }
+            return summary
+        else:
+            return None
+    except Exception as e:
+        print(f"[!] Error fetching CVE: {e}")
+        return None
+    
+
 
 @dataclass
 class AIResult:
@@ -190,6 +222,8 @@ Hãy trả về STRICT JSON với các khóa:
 Viết toàn bộ nội dung báo cáo bằng tiếng Việt (kể cả heading trong Markdown).
 Với CVE data, cung cấp risk assessment cụ thể và prioritization rõ ràng.
 
+
+
 DATA:
 {compact}
 """.strip()
@@ -226,3 +260,28 @@ DATA:
         cve_analysis=str(parsed.get("cve_analysis") or "").strip() or None,
         attack_analysis=str(parsed.get("attack_analysis") or "").strip() or None
     )
+
+def analyze_cve(self, cve_id):
+        # BƯỚC 1: Code lấy dữ liệu thật (Grounding)
+        cve_data = fetch_cve_data(cve_id)
+        
+        if not cve_data:
+            return f"Không tìm thấy thông tin về {cve_id} (hoặc lỗi kết nối)."
+
+        # BƯỚC 2: AI phân tích dựa trên dữ liệu thật
+        prompt = f"""
+        Role: Security Researcher.
+        Task: Explain this CVE and suggest remediation.
+        
+        REAL DATA from Database:
+        {cve_data}
+        
+        OUTPUT FORMAT:
+        **Summary:** (Simple explanation of the bug)
+        **Severity:** (Based on CVSS)
+        **Impact:** (What happens if exploited?)
+        **Remediation:** (Step-by-step fix)
+        **MITRE Mapping:** (Map to ATT&CK Technique ID if possible)
+        """
+        
+        # Gọi model.generate_content(prompt)...
