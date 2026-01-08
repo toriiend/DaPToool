@@ -9,7 +9,7 @@
 - Cái này có thể call API AI Agent ấy, tùy chọn nha (để làm gì hả? cho đẹp porfolio chứ gì nữa :D mấy công ty giờ thích nhúng AI vào lắm)
 - Build này dùng được cho cả windows và linux luôn (không biết nữa, chưa test linux)
 - Nhớ cài nmap curl whatweb nhá
-- Khứa nào dùng kali linux thì khỏi cài mấy tool trên
+- Khứa nào dùng kali linux thì khỏi cài mấy cái trên
 
 # 2. Tại sao? WHY?
 - Ừ thì có thể đã có tool tương tự trên internet (maybe?) nhưng đây là bước khởi đầu của mình, mình dự tính làm cái tool này hơi lâu rồi, cũng như là xem giới hạn của mình là gì (trộm vía mình hiểu được tầm 80-90%, may vaicac)
@@ -80,6 +80,7 @@ discord.com/users/413205034692771850
 Contact:
 
 discord.com/users/413205034692771850
+
 
 
 
